@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Device.Spi;
 using System.Diagnostics;
 using System.Threading;
@@ -7,18 +8,39 @@ using Iot.Device.Ad7193;
 
 namespace AD7193Sample
 {
+    /// <summary>
+    /// This is a simple sample program for AD7193 demonstration. It demonstrates both single and continuous conversions, and outputs the results to both the console/stdout and to a GNURadio compatible UDP server.
+    /// </summary>
     internal class Program
     {
-        private static Iot.Device.Ad7193.Ad7193 ad7193;
+        // private static Iot.Device.Ad7193.Ad7193 ad7193;
         private static DateTime firstDataRead;
         private static double lastChecked = 0;
         private static int lastCount = 0;
         private static int samplesTaken = 0;
+        private static int udpPayloadSize = 1472;
+        private static int udpPayloadCount = 0;
+        private static List<byte> udpPayload = new List<byte>();
+        private static double multiplier = 1.0;
 
-        private static NetCoreServer.UdpServer udpServer;
+        private static NetCoreServer.UdpClient udpClient;
 
         public static void Main(string[] args)
         {
+            Console.WriteLine();
+            Console.WriteLine();
+            Console.WriteLine("Setting up the UDP client as a GNURadio UDP Sink (float)...");
+            SetupUdpClient("192.168.1.30", 8843);
+
+            int loopcounter = 0;
+            while (true)
+            {
+                loopcounter++;
+                Ad7193_AdcValueReceived(null, new AdcValueReceivedEventArgs(new AdcValue()));
+                Thread.Sleep(1);
+            }
+
+/*
             WaitForDebugger();
 
             // set SPI bus ID: 0
@@ -48,8 +70,8 @@ namespace AD7193Sample
 
             Console.WriteLine();
             Console.WriteLine();
-            Console.WriteLine("Starting a UDP Server for GNURadio at 192.168.1.36:8843...");
-            StartUdpServer("192.168.1.36", 8843);
+            Console.WriteLine("Starting a UDP Server as a GNURadio float source...");
+            StartUdpServer("192.168.1.36", 8843, 128);
 
             Console.WriteLine();
             Console.WriteLine();
@@ -76,18 +98,18 @@ namespace AD7193Sample
             while (true)
             {
                 loopcounter++;
-                if (ad7193.HasErrors || (loopcounter % 50 == 0))
-                {
-                    Console.WriteLine();
-                    Console.WriteLine($"AD7193 status: {ad7193.RegisterToString(Register.Status)}");
-                    Console.WriteLine($"AD7193 mode: {ad7193.RegisterToString(Register.Mode)}");
-                    Console.WriteLine($"AD7193 config: {ad7193.RegisterToString(Register.Configuration)}");
-                    Console.WriteLine();
-                    Thread.Sleep(1500);
-                }
-
+                // if (ad7193.HasErrors || (loopcounter % 50 == 0))
+                // {
+                //    Console.WriteLine();
+                //    Console.WriteLine($"AD7193 status: {ad7193.RegisterToString(Register.Status)}");
+                //    Console.WriteLine($"AD7193 mode: {ad7193.RegisterToString(Register.Mode)}");
+                //    Console.WriteLine($"AD7193 config: {ad7193.RegisterToString(Register.Configuration)}");
+                //    Console.WriteLine();
+                //    Thread.Sleep(1500);
+                // }
                 Thread.Sleep(250);
             }
+*/
         }
 
         private static void Ad7193_AdcValueReceived(object sender, Iot.Device.Ad7193.AdcValueReceivedEventArgs e)
@@ -98,6 +120,8 @@ namespace AD7193Sample
             }
 
             double secondsElapsed = (DateTime.UtcNow - firstDataRead).TotalSeconds;
+
+            e.AdcValue.Voltage = Math.Sin(secondsElapsed) * multiplier;
 
             samplesTaken++;
 
@@ -114,9 +138,20 @@ namespace AD7193Sample
                 Console.WriteLine($"Channel {adcValue.Channel.ToString().PadLeft(2)}: {adcValue.Voltage.ToString("0.0000").PadLeft(11)} V | {adcValue.Raw.ToString("N0").PadLeft(13)} | {sps.ToString("N1").PadLeft(9)} SPS");
             }
 
-            if ((udpServer != null) && (udpServer.IsStarted))
+            if (udpClient != null)
             {
-                udpServer.Send(BitConverter.GetBytes((float)e.AdcValue.Voltage));
+                udpPayload.AddRange(BitConverter.GetBytes((float)e.AdcValue.Voltage));
+                udpPayloadCount++;
+
+                if (udpPayload.Count >= udpPayloadSize)
+                {
+                    udpClient.Send(udpPayload.ToArray());
+                    Console.WriteLine($"UDP payload of {udpPayloadCount} samples was sent.");
+                    udpPayload.Clear();
+                    udpPayloadCount = 0;
+
+                    multiplier = (multiplier == 1.0 ? -0.5 : 1.0);
+                }
             }
         }
 
@@ -144,10 +179,15 @@ namespace AD7193Sample
             Console.WriteLine();
         }
 
-        private static void StartUdpServer(string address, int port)
+        private static void SetupUdpClient(string address, int port, int payloadSize = 0)
         {
-            udpServer = new NetCoreServer.UdpServer(address, port);
-            udpServer.Start();
+            if (payloadSize > 0)
+            {
+                udpPayloadSize = payloadSize;
+            }
+
+            udpClient = new NetCoreServer.UdpClient(address, port);
+            udpClient.OptionReuseAddress = true;
         }
     }
 }
